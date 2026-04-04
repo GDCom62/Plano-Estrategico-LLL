@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Acompanhamento Anual - {{ ano }}</title>
+    <link href="https://cdn.jsdelivr.net" rel="stylesheet">
+    <style>
+        .logo-container { text-align: center; padding: 20px; }
+        .logo-container img { max-height: 80px; }
+        .status-badge { font-size: 0.8rem; padding: 5px 10px; border-radius: 20px; }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="logo-container">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo Empresa">
+    </div>
+
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Relatório de Acompanhamento - {{ ano }}</h2>
+            <a href="/" class="btn btn-secondary">Voltar ao Início</a>
+        </div>
+
+        <div class="card shadow-sm">
+            <table class="table table-hover m-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Ação</th>
+                        <th>Responsável</th>
+                        <th>Prazo</th>
+                        <th>Custo</th>
+                        <th>Status Atual</th>
+                        <th>Alterar</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for acao in acoes %}
+                    <tr>
+                        <td><strong>{{ acao.descricao_acao }}</strong></td>
+                        <td>{{ acao.nome }}</td>
+                        <td>{{ acao.prazo.strftime('%d/%m/%Y') }}</td>
+                        <td>R$ {{ acao.quanto }}</td>
+                        <td><span class="badge bg-primary status-badge">{{ acao.status }}</span></td>
+                        <td>
+                            <form action="/atualizar" method="POST" class="d-flex">
+                                <input type="hidden" name="id_acao" value="{{ acao.id_acao }}">
+                                <select name="novo_status" onchange="this.form.submit()" class="form-select form-select-sm">
+                                    <option value="">Mudar...</option>
+                                    <option value="Executando">Executando</option>
+                                    <option value="Concluido">Concluido</option>
+                                    <option value="Atrasado">Atrasado</option>
+                                </select>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
