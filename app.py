@@ -1,118 +1,127 @@
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
+import streamlit as st
 import mysql.connector
+import pandas as pd
 from datetime import datetime
 import io
-
-# Bibliotecas para geração de PDF
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-app = Flask(__name__)
-app.secret_key = 'chave_mestra_5w2h_segura'
+# Configuração da Página
+st.set_page_config(page_title="Sistema 5W2H", layout="wide")
 
+# Função para conectar ao TiDB usando os Secrets do Streamlit
 def get_db_connection():
     return mysql.connector.connect(
-        host="127.0.0.1",
-        user="root",
-        password="",
-        database="sistema_gestao",
-        port=3306
+        host=st.secrets["DB_HOST"],
+        user=st.secrets["DB_USER"],
+        password=st.secrets["DB_PASSWORD"],
+        database=st.secrets["DB_NAME"],
+        port=int(st.secrets["DB_PORT"]),
+        ssl_disabled=False  # TiDB exige SSL para conexões externas
     )
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if request.method == 'POST':
-        user, pw = request.form['usuario'], request.form['senha']
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (user, pw))
-        if cursor.fetchone():
-            session['logado'] = True
-            return redirect(url_for('index'))
-        conn.close()
-    return render_template('login.html')
+# --- CONTROLE DE LOGIN ---
+if 'logado' not in st.session_state:
+    st.session_state['logado'] = False
 
-@app.route('/logout')
-def logout():
-    session.pop('logado', None)
-    return redirect(url_for('login'))
+if not st.session_state['logado']:
+    st.title("🔑 Login - Sistema 5W2H")
+    usuario = st.text_input("Usuário")
+    senha = st.text_input("Senha", type="password")
+    
+    if st.button("Entrar"):
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (usuario, senha))
+            user_data = cursor.fetchone()
+            if user_data:
+                st.session_state['logado'] = True
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos")
+            conn.close()
+        except Exception as e:
+            st.error(f"Erro ao conectar no banco: {e}")
+    st.stop()
 
-@app.route('/')
-def index():
-    if not session.get('logado'): return redirect(url_for('login'))
+# --- LOGOUT ---
+if st.sidebar.button("Sair / Logout"):
+    st.session_state['logado'] = False
+    st.rerun()
+
+# --- DASHBOARD PRINCIPAL ---
+st.title("📋 Plano de Ação Estratégico 5W2H")
+
+try:
     conn = get_db_connection()
+
+    # Buscar dados para a tabela
+    query = "SELECT A.*, U.nome as responsavel_nome FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario ORDER BY A.prazo ASC"
+    df = pd.read_sql(query, conn)
+
+    # Buscar usuários para o formulário
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT A.*, U.nome FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario ORDER BY A.prazo ASC")
-    acoes = cursor.fetchall()
     cursor.execute("SELECT * FROM Usuarios")
     usuarios = cursor.fetchall()
+    lista_usuarios = {u['nome']: u['id_usuario'] for u in usuarios}
+
+    # --- FORMULÁRIO DE ADIÇÃO ---
+    with st.expander("➕ Adicionar Nova Ação"):
+        with st.form("form_acao"):
+            col1, col2 = st.columns(2)
+            with col1:
+                descricao = st.text_input("Ação (What)")
+                porque = st.text_area("Por que? (Why)")
+                onde = st.text_input("Onde? (Where)")
+            with col2:
+                resp_nome = st.selectbox("Quem? (Who)", list(lista_usuarios.keys()))
+                prazo = st.date_input("Prazo (When)", datetime.now())
+                como = st.text_area("Como? (How)")
+                quando_det = st.text_input("Detalhe do Quando")
+                status = st.selectbox("Status", ["Pendente", "Em Andamento", "Concluído", "Atrasado"])
+            
+            if st.form_submit_button("Salvar Ação"):
+                cursor.execute("""
+                    INSERT INTO Acoes (descricao_acao, porque, onde, id_responsavel, prazo, como, quando_detalhe, status) 
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (descricao, porque, onde, lista_usuarios[resp_nome], prazo, como, quando_det, status))
+                conn.commit()
+                st.success("Salvo com sucesso!")
+                st.rerun()
+
+    # --- EXIBIÇÃO ---
+    st.subheader("Ações Cadastradas")
+    st.dataframe(df, use_container_width=True)
+
+    # --- FUNÇÃO GERAR PDF ---
+    def gerar_pdf(dados):
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+        elements = []
+        styles = getSampleStyleSheet()
+        elements.append(Paragraph("PLANO DE AÇÃO ESTRATÉGICO 5W2H", styles['Title']))
+        
+        table_data = [["Ação", "Quem", "Prazo", "Status", "Como"]]
+        for _, row in dados.iterrows():
+            table_data.append([row['descricao_acao'], row['responsavel_nome'], str(row['prazo']), row['status'], row['como']])
+        
+        t = Table(table_data)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.navy),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+            ('FONTSIZE', (0,0), (-1,-1), 8)
+        ]))
+        elements.append(t)
+        doc.build(elements)
+        return buffer.getvalue()
+
+    st.download_button("📥 Baixar Relatório PDF", data=gerar_pdf(df), file_name="Plano_5W2H.pdf", mime="application/pdf")
+    
     conn.close()
-    return render_template('index.html', acoes=acoes, usuarios=usuarios, hoje=datetime.now().date())
 
-@app.route('/salvar', methods=['POST'])
-def salvar():
-    if not session.get('logado'): return redirect(url_for('login'))
-    id_acao = request.form.get('id_acao')
-    dados = (request.form['descricao'], request.form['porque'], request.form['onde'], 
-             request.form['responsavel'], request.form['prazo'], request.form['como'], 
-             request.form['quando_detalhe'], request.form['status'])
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        if id_acao and id_acao.strip() != "":
-            sql = "UPDATE Acoes SET descricao_acao=%s, porque=%s, onde=%s, id_responsavel=%s, prazo=%s, como=%s, quando_detalhe=%s, status=%s WHERE id_acao=%s"
-            cursor.execute(sql, dados + (id_acao,))
-        else:
-            sql = "INSERT INTO Acoes (descricao_acao, porque, onde, id_responsavel, prazo, como, quando_detalhe, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
-            cursor.execute(sql, dados)
-        conn.commit()
-    except Exception as e: print(f"ERRO: {e}")
-    finally: conn.close()
-    return redirect(url_for('index'))
-
-@app.route('/excluir/<int:id>')
-def excluir(id):
-    if not session.get('logado'): return redirect(url_for('login'))
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Acoes WHERE id_acao = %s", (id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for('index'))
-
-@app.route('/gerar_pdf')
-def gerar_pdf():
-    if not session.get('logado'): return redirect(url_for('login'))
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT A.*, U.nome FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario ORDER BY A.prazo ASC")
-    acoes = cursor.fetchall()
-    conn.close()
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
-    elements = []
-    styles = getSampleStyleSheet()
-    elements.append(Paragraph("PLANO DE AÇÃO ESTRATÉGICO 5W2H", styles['Title']))
-    elements.append(Spacer(1, 12))
-
-    data = [["Ação (What)", "Quem", "Prazo", "Status", "Como (How)", "QUANDO (Det)"]]
-    for a in acoes:
-        data.append([a['descricao_acao'], a['nome'], str(a['prazo']), a['status'], a['como'], a['quando_detalhe']])
-
-    t = Table(data, colWidths=[150, 100, 80, 80, 200, 150])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.navy),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('FONTSIZE', (0,0), (-1,-1), 8),
-    ]))
-    elements.append(t)
-    doc.build(elements)
-    buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name="Plano_5W2H.pdf", mimetype='application/pdf')
-
-if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=8080, debug=True)
+except Exception as e:
+    st.error(f"Ocorreu um erro: {e}")
