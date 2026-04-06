@@ -13,12 +13,14 @@ st.set_page_config(page_title="Sistema 5W2H", layout="wide")
 
 def get_db_connection():
     return mysql.connector.connect(
-        host="127.0.0.1", # Se o MySQL estiver em outro PC, mude para o IP dele
-        user="root",
-        password="",
-        database="sistema_gestao",
-        port=3306
+        host=st.secrets["DB_HOST"],
+        user=st.secrets["DB_USER"],
+        password=st.secrets["DB_PASSWORD"],
+        database=st.secrets["DB_NAME"],
+        port=int(st.secrets["DB_PORT"]),
+        ssl_disabled=False # TiDB exige conexão segura (SSL)
     )
+
 
 # --- LOGIN SIMPLES ---
 if 'logado' not in st.session_state:
