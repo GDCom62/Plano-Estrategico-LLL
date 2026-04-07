@@ -4,28 +4,39 @@ import pandas as pd
 from datetime import datetime
 import io
 from reportlab.lib.pagesizes import landscape, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
 from reportlab.lib import colors
 
-# 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Sistema 5W2H", layout="wide")
 
-# 2. CONEXÃO COM CACHE (Evita travar o app abrindo várias conexões)
-@st.cache_resource
-def init_connection():
-    return mysql.connector.connect(
-        host=st.secrets["DB_HOST"],
-        user=st.secrets["DB_USER"],
-        password=st.secrets["DB_PASSWORD"],
-        database=st.secrets["DB_NAME"],
-        port=int(st.secrets["DB_PORT"]),
-        use_pure=True,
-        ssl_disabled=False,
-        autocommit=True # Garante que as mudanças sejam salvas na hora
-    )
+# FUNÇÃO PARA CONECTAR E EXECUTAR (Abre e fecha na hora)
+def run_query(query, params=None, is_select=True):
+    try:
+        conn = mysql.connector.connect(
+            host=st.secrets["DB_HOST"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            database=st.secrets["DB_NAME"],
+            port=int(st.secrets["DB_PORT"]),
+            use_pure=True,
+            ssl_disabled=False # TiDB costuma exigir SSL True para nuvem
+        )
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(query, params or ())
+        
+        if is_select:
+            result = cursor.fetchall()
+            conn.close()
+            return result
+        else:
+            conn.commit()
+            conn.close()
+            return True
+    except Exception as e:
+        st.error(f"Erro no banco de dados: {e}")
+        return None
 
-# 3. CONTROLE DE LOGIN
+# --- LOGIN ---
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
 
@@ -34,80 +45,46 @@ if not st.session_state['logado']:
     u = st.text_input("Usuário")
     s = st.text_input("Senha", type="password")
     if st.button("Entrar"):
-        conn = init_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
-        if cursor.fetchone():
+        res = run_query("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
+        if res:
             st.session_state['logado'] = True
             st.rerun()
         else:
-            st.error("Incorreto")
+            st.error("Usuário ou senha inválidos.")
     st.stop()
 
-# 4. DASHBOARD
+# --- DASHBOARD ---
 st.title("📋 Plano de Ação Estratégico 5W2H")
-
-conn = init_connection()
-cursor = conn.cursor(dictionary=True)
-
-# BUSCAR USUÁRIOS
-cursor.execute("SELECT id_usuario, nome FROM Usuarios")
-usuarios_db = cursor.fetchall()
-dict_usuarios = {u['nome']: u['id_usuario'] for u in usuarios_db}
-
-# --- FORMULÁRIO DE CADASTRO ---
-with st.expander("➕ Nova Ação"):
-    with st.form("add_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            what = st.text_input("O que (Ação)?")
-            why = st.text_area("Por que?")
-        with col2:
-            who = st.selectbox("Quem?", list(dict_usuarios.keys()))
-            when = st.date_input("Prazo")
-            status = st.selectbox("Status", ["Pendente", "Em Andamento", "Concluído"])
-        
-        if st.form_submit_button("Salvar"):
-            cursor.execute("INSERT INTO Acoes (descricao_acao, porque, id_responsavel, prazo, status) VALUES (%s,%s,%s,%s,%s)", 
-                           (what, why, dict_usuarios[who], when, status))
-            st.success("Salvo!")
-            st.rerun()
-
-# --- TABELA E EXCLUSÃO ---
-st.subheader("Ações Registradas")
-cursor.execute("SELECT A.id_acao, A.descricao_acao, U.nome as quem, A.prazo, A.status FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
-dados = cursor.fetchall()
-
-if dados:
-    for item in dados:
-        with st.container():
-            col_txt, col_btn = st.columns([0.85, 0.15])
-            with col_txt:
-                # Exibe a linha formatada
-                st.write(f"**{item['descricao_acao']}** | Resp: {item['quem']} | Prazo: {item['prazo']} | [{item['status']}]")
-            with col_btn:
-                # Botão de Excluir com ID Único
-                if st.button("🗑️ Excluir", key=f"del_{item['id_acao']}"):
-                    cursor.execute("DELETE FROM Acoes WHERE id_acao = %s", (item['id_acao'],))
-                    st.toast(f"Ação {item['id_acao']} removida!")
-                    st.rerun()
-            st.divider()
-
-    # --- PDF ---
-    def gerar_pdf(lista):
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
-        elements = [Paragraph("RELATÓRIO 5W2H", getSampleStyleSheet()['Title'])]
-        data = [["Ação", "Quem", "Prazo", "Status"]]
-        for r in lista: data.append([r['descricao_acao'], r['quem'], str(r['prazo']), r['status']])
-        t = Table(data); t.setStyle(TableStyle([('GRID',(0,0),(-1,-1),1,colors.black)]))
-        elements.append(t); doc.build(elements)
-        return buf.getvalue()
-
-    st.download_button("📥 PDF", gerar_pdf(dados), "plano.pdf", "application/pdf")
-else:
-    st.info("Nada cadastrado.")
-
 if st.sidebar.button("Logout"):
     st.session_state['logado'] = False
     st.rerun()
+
+# BUSCAR USUÁRIOS E AÇÕES
+usuarios = run_query("SELECT id_usuario, nome FROM Usuarios")
+dict_usuarios = {u['nome']: u['id_usuario'] for u in usuarios} if usuarios else {}
+
+with st.expander("➕ Nova Ação"):
+    with st.form("form_add"):
+        c1, c2 = st.columns(2)
+        what = c1.text_input("O que?")
+        who = c2.selectbox("Quem?", list(dict_usuarios.keys()))
+        when = c2.date_input("Prazo")
+        status = c2.selectbox("Status", ["Pendente", "Em Andamento", "Concluído"])
+        if st.form_submit_button("Salvar"):
+            run_query("INSERT INTO Acoes (descricao_acao, id_responsavel, prazo, status) VALUES (%s,%s,%s,%s)", 
+                      (what, dict_usuarios[who], when, status), is_select=False)
+            st.rerun()
+
+# LISTAGEM E EXCLUSÃO
+st.subheader("Ações Registradas")
+acoes = run_query("SELECT A.id_acao, A.descricao_acao, U.nome as quem, A.prazo, A.status FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
+
+if acoes:
+    for a in acoes:
+        col_txt, col_btn = st.columns([0.8, 0.2])
+        col_txt.write(f"**{a['descricao_acao']}** | {a['quem']} | {a['prazo']} | {a['status']}")
+        if col_btn.button("🗑️ Excluir", key=f"btn_{a['id_acao']}"):
+            run_query("DELETE FROM Acoes WHERE id_acao = %s", (a['id_acao'],), is_select=False)
+            st.rerun()
+else:
+    st.info("Nenhuma ação cadastrada.")
