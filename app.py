@@ -9,17 +9,15 @@ st.set_page_config(page_title="Sistema 5W2H", layout="wide")
 # FUNÇÃO DE CONEXÃO ÚNICA (Abre e fecha em cada operação para não travar)
 def executar_db(sql, params=None, retorno=True):
     try:
-               config = {
+        config = {
             'host': st.secrets["DB_HOST"],
             'user': st.secrets["DB_USER"],
             'password': st.secrets["DB_PASSWORD"],
             'database': st.secrets["DB_NAME"],
             'port': int(st.secrets["DB_PORT"]),
             'use_pure': True,
-            'ssl_disabled': True,  # Tente mudar para True para testar o travamento
-            'connect_timeout': 5    # Diminuímos o tempo para ele "desistir" logo e mostrar erro se falhar
-        }
-
+            'ssl_disabled': True,
+            'connect_timeout': 10
         }
         conn = mysql.connector.connect(**config)
         cursor = conn.cursor(dictionary=True)
@@ -38,6 +36,7 @@ def executar_db(sql, params=None, retorno=True):
     except Exception as e:
         st.error(f"Erro no Banco de Dados: {e}")
         return None
+
 
 # --- CONTROLE DE SESSÃO ---
 if 'logado' not in st.session_state:
