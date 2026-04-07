@@ -99,28 +99,40 @@ if conn:
                         st.rerun()
 
         # --- TABELA DE EXIBIÇÃO ---
+              # --- TABELA DE EXIBIÇÃO (VERSÃO MANUAL PARA NÃO TRAVAR) ---
         st.subheader("Ações Registradas")
         try:
-            # Query com JOIN para pegar o nome do responsável
-            query = """
-            SELECT A.id_acao, A.descricao_acao, A.porque, A.onde, U.nome as quem, A.prazo, A.como, A.status 
-            FROM Acoes A 
-            JOIN Usuarios U ON A.id_responsavel = U.id_usuario
-            """
-            df = pd.read_sql(query, conn)
+            # Query manual em vez de usar pd.read_sql diretamente
+            query = "SELECT A.descricao_acao, A.porque, A.onde, U.nome as quem, A.prazo, A.como, A.status FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario"
+            cursor.execute(query)
+            dados = cursor.fetchall() # Pega os dados como lista de dicionários
             
-            if df.empty:
+            if not dados:
                 st.info("Nenhuma ação cadastrada no momento.")
             else:
+                # Transforma em DataFrame apenas para exibição gráfica
+                df = pd.DataFrame(dados)
                 st.dataframe(df, use_container_width=True)
 
-                # --- GERAR PDF ---
-                def exportar_pdf(data_frame):
+                # --- BOTÃO PDF ---
+                def exportar_pdf(lista_dados):
                     buf = io.BytesIO()
                     doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
-                    elements = []
-                    styles = getSampleStyleSheet()
-                    elements.append(Paragraph("RELATÓRIO 5W2H", styles['Title']))
+                    elements = [Paragraph("RELATÓRIO 5W2H", getSampleStyleSheet()['Title'])]
+                    tabela_pdf = [["Ação", "Quem", "Prazo", "Status"]]
+                    for row in lista_dados:
+                        tabela_pdf.append([row['descricao_acao'], row['quem'], str(row['prazo']), row['status']])
+                    t = Table(tabela_pdf)
+                    t.setStyle(TableStyle([('GRID',(0,0),(-1,-1),1,colors.black)]))
+                    elements.append(t)
+                    doc.build(elements)
+                    return buf.getvalue()
+
+                st.download_button("📥 Baixar PDF", data=exportar_pdf(dados), file_name="plano.pdf", mime="application/pdf")
+        
+        except Exception as e:
+            st.error(f"Erro ao carregar tabela: {e}")
+
                     
                     # Preparar dados para a tabela do PDF
                     tabela_pdf = [["Ação", "Por que", "Quem", "Prazo", "Status"]]
