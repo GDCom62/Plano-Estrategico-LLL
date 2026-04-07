@@ -14,17 +14,19 @@ st.set_page_config(page_title="Sistema 5W2H", layout="wide")
 # 2. FUNÇÃO PARA EXECUTAR COMANDOS NO BANCO (Abre e fecha a cada uso para não travar)
 def executar_db(sql, params=None, retorno=True):
     try:
-        config = {
-            'host': st.secrets["DB_HOST"],
-            'user': st.secrets["DB_USER"],
-            'password': st.secrets["DB_PASSWORD"],
-            'database': st.secrets["DB_NAME"],
-            'port': int(st.secrets["DB_PORT"]),
-            'use_pure': True,
-            'ssl_disabled': False,  # TiDB EXIGE SSL ATIVADO
-            'connect_timeout': 15
-        }
-        conn = mysql.connector.connect(**config)
+        # Configuração específica para TiDB Cloud Serverless
+        conn = mysql.connector.connect(
+            host=st.secrets["DB_HOST"],
+            user=st.secrets["DB_USER"],
+            password=st.secrets["DB_PASSWORD"],
+            database=st.secrets["DB_NAME"],
+            port=int(st.secrets["DB_PORT"]),
+            use_pure=True,
+            autocommit=True,
+            # ESTA É A LINHA QUE RESOLVE O ERRO 1105:
+            ssl_verify_cert=True,
+            ssl_mode='REQUIRED' 
+        )
         cursor = conn.cursor(dictionary=True)
         cursor.execute(sql, params or ())
         
