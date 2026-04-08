@@ -115,15 +115,34 @@ if acoes:
             st.rerun()
 
     # PDF
+        # PDF Otimizado para evitar erros com campos vazios
     def gerar_pdf(lista):
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
         elements = [Paragraph("RELATÓRIO 5W2H", getSampleStyleSheet()['Title']), Spacer(1,12)]
+        
+        # Cabeçalho do PDF
         data = [["Ação", "Quem", "Prazo", "Status", "Por que", "Como"]]
+        
         for r in lista:
-            data.append([r['descricao_acao'], r['quem'], str(r['prazo']), r['status'], r['porque'][:30], r['como'][:30]])
+            # Tratamento para evitar erro de NoneType (campos vazios)
+            p_acao = str(r.get('descricao_acao') or "")
+            p_quem = str(r.get('quem') or "")
+            p_prazo = str(r.get('prazo') or "")
+            p_status = str(r.get('status') or "")
+            # Pega os primeiros 30 caracteres apenas se o texto existir
+            p_porque = str(r.get('porque') or "")[:30]
+            p_como = str(r.get('como') or "")[:30]
+            
+            data.append([p_acao, p_quem, p_prazo, p_status, p_porque, p_como])
+            
         t = Table(data)
-        t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.navy),('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),('GRID',(0,0),(-1,-1),1,colors.grey)]))
+        t.setStyle(TableStyle([
+            ('BACKGROUND',(0,0),(-1,0),colors.navy),
+            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
+            ('GRID',(0,0),(-1,-1),1,colors.grey),
+            ('FONTSIZE', (0,0), (-1,-1), 8)
+        ]))
         elements.append(t)
         doc.build(elements)
         return buf.getvalue()
