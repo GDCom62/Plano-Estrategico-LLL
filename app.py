@@ -8,8 +8,9 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 
-st.set_page_config(page_title="Sistema 5W2H Completo", layout="wide")
+st.set_page_config(page_title="Sistema 5W2H Pro", layout="wide")
 
+# FUNÇÃO DE CONEXÃO
 def executar_db(sql, params=None, retorno=True):
     try:
         conn = pymysql.connect(
@@ -41,7 +42,7 @@ if 'logado' not in st.session_state:
     st.session_state['logado'] = False
 
 if not st.session_state['logado']:
-    st.title("🔐 Login - 5W2H")
+    st.title("🔐 Login - Sistema 5W2H")
     u = st.text_input("Usuário")
     s = st.text_input("Senha", type="password")
     if st.button("Entrar"):
@@ -50,7 +51,7 @@ if not st.session_state['logado']:
             st.session_state['logado'] = True
             st.rerun()
         else:
-            st.error("Dados inválidos.")
+            st.error("Usuário ou senha inválidos.")
     st.stop()
 
 # --- DASHBOARD ---
@@ -59,38 +60,40 @@ if st.sidebar.button("Sair"):
     st.session_state['logado'] = False
     st.rerun()
 
+# Buscar Usuários
 res_users = executar_db("SELECT id_usuario, nome FROM Usuarios")
 dict_u = {user['nome']: user['id_usuario'] for user in res_users} if res_users else {}
 
-# --- FORMULÁRIO 5W2H ---
-with st.expander("➕ Cadastrar Novo Checklist 5W2H", expanded=True):
+# --- FORMULÁRIO COMPLETO ---
+with st.expander("➕ Novo Plano de Ação", expanded=True):
     with st.form("form_5w2h", clear_on_submit=True):
         c1, c2 = st.columns(2)
         
         with c1:
-            what = st.text_input("What (O que será feito?)", placeholder="Ex: Treinamento de vendas")
-            why = st.text_area("Why (Por que será feito?)", placeholder="Ex: Melhorar conversão de leads")
-            where = st.text_input("Where (Onde será feito?)", placeholder="Ex: Sala de reuniões A")
-            who = st.selectbox("Who (Quem fará?)", list(dict_u.keys()))
+            what = st.text_input("What (O que?)", placeholder="Ação a ser realizada")
+            why = st.text_area("Why (Por que?)", placeholder="Motivo/Justificativa")
+            where = st.text_input("Where (Onde?)", placeholder="Local ou setor")
+            who = st.selectbox("Who (Quem?)", list(dict_u.keys()))
             
         with c2:
-            when = st.date_input("When (Quando será feito? - Prazo)")
-            how = st.text_area("How (Como será feito?)", placeholder="Ex: Através de workshop prático")
-            how_much = st.number_input("How Much (Quanto custa?)", min_value=0.0, step=0.01)
-            status = st.selectbox("Status Atual", ["Pendente", "Em Andamento", "Concluído", "Atrasado"])
+            when = st.date_input("When (Quando?)", datetime.now())
+            how = st.text_area("How (Como?)", placeholder="Método ou etapas")
+            how_much = st.number_input("How Much (Quanto custa?)", min_value=0.0)
+            # CAMPO DE STATUS SOLICITADO:
+            status = st.selectbox("Status Atual", ["Em análise", "Em andamento", "Concluído", "Atrasado"])
 
         if st.form_submit_button("💾 Salvar Plano de Ação"):
             if not what:
-                st.error("O campo 'What' é obrigatório!")
+                st.error("Preencha o campo 'What'!")
             else:
                 sql_ins = """INSERT INTO Acoes (descricao_acao, porque, onde, id_responsavel, prazo, como, quanto_custa, status) 
                              VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
                 executar_db(sql_ins, (what, why, where, dict_u[who], when, how, how_much, status), retorno=False)
-                st.success("Plano 5W2H salvo com sucesso!")
+                st.success("Plano salvo com sucesso!")
                 st.rerun()
 
 # --- LISTAGEM ---
-st.subheader("📋 Ações em Execução")
+st.subheader("📋 Ações Cadastradas")
 acoes = executar_db("""
     SELECT A.*, U.nome as quem FROM Acoes A 
     JOIN Usuarios U ON A.id_responsavel = U.id_usuario 
@@ -99,36 +102,32 @@ acoes = executar_db("""
 
 if acoes:
     df = pd.DataFrame(acoes)
-    # Formatação visual da tabela
-    st.dataframe(df[['descricao_acao', 'porque', 'onde', 'prazo', 'quem', 'como', 'quanto_custa', 'status']], use_container_width=True)
+    # Reorganizar colunas para exibição amigável
+    colunas_exibir = ['id_acao', 'descricao_acao', 'quem', 'prazo', 'status', 'porque', 'onde', 'como', 'quanto_custa']
+    st.dataframe(df[colunas_exibir], use_container_width=True)
     
-    # Opção de Exclusão por ID
+    # Exclusão
     with st.sidebar:
-        st.subheader("Gerenciar Dados")
-        id_excluir = st.number_input("ID para excluir", min_value=1, step=1)
-        if st.button("🗑️ Excluir Ação"):
-            executar_db("DELETE FROM Acoes WHERE id_acao=%s", (id_excluir,), retorno=False)
+        st.subheader("Gerenciar")
+        id_del = st.number_input("ID da ação para excluir", min_value=1, step=1)
+        if st.button("🗑️ Excluir"):
+            executar_db("DELETE FROM Acoes WHERE id_acao=%s", (id_del,), retorno=False)
             st.rerun()
 
-    # --- GERAR PDF ---
+    # PDF
     def gerar_pdf(lista):
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
-        elements = [Paragraph("RELATÓRIO ESTRATÉGICO 5W2H", getSampleStyleSheet()['Title']), Spacer(1,12)]
-        data = [["What", "Why", "Where", "When", "Who", "How", "How Much"]]
+        elements = [Paragraph("RELATÓRIO 5W2H", getSampleStyleSheet()['Title']), Spacer(1,12)]
+        data = [["Ação", "Quem", "Prazo", "Status", "Por que", "Como"]]
         for r in lista:
-            data.append([r['descricao_acao'], r['porque'], r['onde'], str(r['prazo']), r['quem'], r['como'], f"R$ {r['quanto_custa']:.2f}"])
+            data.append([r['descricao_acao'], r['quem'], str(r['prazo']), r['status'], r['porque'][:30], r['como'][:30]])
         t = Table(data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND',(0,0),(-1,0),colors.navy),
-            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
-            ('GRID',(0,0),(-1,-1),1,colors.grey),
-            ('FONTSIZE', (0,0), (-1,-1), 7)
-        ]))
+        t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.navy),('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),('GRID',(0,0),(-1,-1),1,colors.grey)]))
         elements.append(t)
         doc.build(elements)
         return buf.getvalue()
 
-    st.download_button("📥 Exportar Plano 5W2H (PDF)", gerar_pdf(acoes), "plano_5w2h.pdf", "application/pdf")
+    st.download_button("📥 Gerar PDF", gerar_pdf(acoes), "plano_5w2h.pdf", "application/pdf")
 else:
-    st.info("Nenhum plano de ação cadastrado.")
+    st.info("Nenhuma ação no momento.")
