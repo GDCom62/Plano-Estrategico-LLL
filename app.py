@@ -54,6 +54,10 @@ if not st.session_state['logado']:
             st.error("Usuário ou senha inválidos.")
     st.stop()
 
+# --- ESTADO DE EDIÇÃO ---
+if 'edit_id' not in st.session_state:
+    st.session_state.edit_id = None
+
 # --- DASHBOARD ---
 st.title("🚀 Plano de Ação Estratégico 5W2H")
 if st.sidebar.button("Sair"):
@@ -64,89 +68,91 @@ if st.sidebar.button("Sair"):
 res_users = executar_db("SELECT id_usuario, nome FROM Usuarios")
 dict_u = {user['nome']: user['id_usuario'] for user in res_users} if res_users else {}
 
-# --- FORMULÁRIO COMPLETO ---
-with st.expander("➕ Novo Plano de Ação", expanded=True):
+# Se estiver em modo edição, buscar os dados do item
+dados_edit = None
+if st.session_state.edit_id:
+    res = executar_db("SELECT * FROM Acoes WHERE id_acao=%s", (st.session_state.edit_id,))
+    if res: dados_edit = res[0]
+
+# --- FORMULÁRIO (CADASTRO OU EDIÇÃO) ---
+titulo_form = "📝 Editar Ação" if st.session_state.edit_id else "➕ Novo Plano de Ação"
+with st.expander(titulo_form, expanded=True):
     with st.form("form_5w2h", clear_on_submit=True):
         c1, c2 = st.columns(2)
         
         with c1:
-            what = st.text_input("What (O que?)", placeholder="Ação a ser realizada")
-            why = st.text_area("Why (Por que?)", placeholder="Motivo/Justificativa")
-            where = st.text_input("Where (Onde?)", placeholder="Local ou setor")
-            who = st.selectbox("Who (Quem?)", list(dict_u.keys()))
+            what = st.text_input("What (O que?)", value=dados_edit['descricao_acao'] if dados_edit else "")
+            why = st.text_area("Why (Por que?)", value=dados_edit['porque'] if dados_edit else "")
+            where = st.text_input("Where (Onde?)", value=dados_edit['onde'] if dados_edit else "")
             
         with c2:
-            when = st.date_input("When (Quando?)", datetime.now())
-            how = st.text_area("How (Como?)", placeholder="Método ou etapas")
-            how_much = st.number_input("How Much (Quanto custa?)", min_value=0.0)
-            # CAMPO DE STATUS SOLICITADO:
-            status = st.selectbox("Status Atual", ["Em análise", "Em andamento", "Concluído", "Atrasado"])
+            idx_user = list(dict_u.values()).index(dados_edit['id_responsavel']) if dados_edit and dados_edit['id_responsavel'] in dict_u.values() else 0
+            who = st.selectbox("Who (Quem?)", list(dict_u.keys()), index=idx_user)
+            
+            # Ajuste de data para edição
+            data_padrao = dados_edit['prazo'] if dados_edit else datetime.now()
+            when = st.date_input("When (Quando?)", data_padrao)
+            
+            how = st.text_area("How (Como?)", value=dados_edit['como'] if dados_edit else "")
+            
+            status_opcoes = ["Em análise", "Em andamento", "Concluído", "Atrasado"]
+            idx_status = status_opcoes.index(dados_edit['status']) if dados_edit and dados_edit['status'] in status_opcoes else 0
+            status = st.selectbox("Status Atual", status_opcoes, index=idx_status)
 
-        if st.form_submit_button("💾 Salvar Plano de Ação"):
-            if not what:
-                st.error("Preencha o campo 'What'!")
-            else:
-                sql_ins = """INSERT INTO Acoes (descricao_acao, porque, onde, id_responsavel, prazo, como, quanto_custa, status) 
-                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
-                executar_db(sql_ins, (what, why, where, dict_u[who], when, how, how_much, status), retorno=False)
-                st.success("Plano salvo com sucesso!")
+        col_btn1, col_btn2 = st.columns([0.2, 0.8])
+        with col_btn1:
+            if st.form_submit_button("💾 Salvar"):
+                if st.session_state.edit_id:
+                    sql = "UPDATE Acoes SET descricao_acao=%s, porque=%s, onde=%s, id_responsavel=%s, prazo=%s, como=%s, status=%s WHERE id_acao=%s"
+                    executar_db(sql, (what, why, where, dict_u[who], when, how, status, st.session_state.edit_id), retorno=False)
+                    st.session_state.edit_id = None
+                else:
+                    sql = "INSERT INTO Acoes (descricao_acao, porque, onde, id_responsavel, prazo, como, status) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+                    executar_db(sql, (what, why, where, dict_u[who], when, how, status), retorno=False)
                 st.rerun()
+        
+        with col_btn2:
+            if st.session_state.edit_id:
+                if st.form_submit_button("❌ Cancelar Edição"):
+                    st.session_state.edit_id = None
+                    st.rerun()
 
 # --- LISTAGEM ---
 st.subheader("📋 Ações Cadastradas")
-acoes = executar_db("""
-    SELECT A.*, U.nome as quem FROM Acoes A 
-    JOIN Usuarios U ON A.id_responsavel = U.id_usuario 
-    ORDER BY A.prazo ASC
-""")
+acoes = executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario ORDER BY A.prazo ASC")
 
 if acoes:
-    df = pd.DataFrame(acoes)
-    # Reorganizar colunas para exibição amigável
-    colunas_exibir = ['id_acao', 'descricao_acao', 'quem', 'prazo', 'status', 'porque', 'onde', 'como', 'quanto_custa']
-    st.dataframe(df[colunas_exibir], use_container_width=True)
-    
-    # Exclusão
-    with st.sidebar:
-        st.subheader("Gerenciar")
-        id_del = st.number_input("ID da ação para excluir", min_value=1, step=1)
-        if st.button("🗑️ Excluir"):
-            executar_db("DELETE FROM Acoes WHERE id_acao=%s", (id_del,), retorno=False)
-            st.rerun()
+    for a in acoes:
+        with st.container():
+            col_info, col_edit, col_del = st.columns([0.7, 0.15, 0.15])
+            
+            with col_info:
+                st.markdown(f"**{a['descricao_acao']}** | Resp: {a['quem']} | Status: `{a['status']}`")
+                st.caption(f"Prazo: {a['prazo']} | Onde: {a['onde']}")
+            
+            with col_edit:
+                if st.button("✏️ Editar", key=f"edit_{a['id_acao']}"):
+                    st.session_state.edit_id = a['id_acao']
+                    st.rerun()
+            
+            with col_del:
+                if st.button("🗑️ Excluir", key=f"del_{a['id_acao']}"):
+                    executar_db("DELETE FROM Acoes WHERE id_acao=%s", (a['id_acao'],), retorno=False)
+                    st.rerun()
+            st.divider()
 
-    # PDF
-        # PDF Otimizado para evitar erros com campos vazios
+    # --- FUNÇÃO PDF ---
     def gerar_pdf(lista):
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=landscape(A4))
         elements = [Paragraph("RELATÓRIO 5W2H", getSampleStyleSheet()['Title']), Spacer(1,12)]
-        
-        # Cabeçalho do PDF
-        data = [["Ação", "Quem", "Prazo", "Status", "Por que", "Como"]]
-        
+        data = [["Ação", "Quem", "Prazo", "Status"]]
         for r in lista:
-            # Tratamento para evitar erro de NoneType (campos vazios)
-            p_acao = str(r.get('descricao_acao') or "")
-            p_quem = str(r.get('quem') or "")
-            p_prazo = str(r.get('prazo') or "")
-            p_status = str(r.get('status') or "")
-            # Pega os primeiros 30 caracteres apenas se o texto existir
-            p_porque = str(r.get('porque') or "")[:30]
-            p_como = str(r.get('como') or "")[:30]
-            
-            data.append([p_acao, p_quem, p_prazo, p_status, p_porque, p_como])
-            
-        t = Table(data)
-        t.setStyle(TableStyle([
-            ('BACKGROUND',(0,0),(-1,0),colors.navy),
-            ('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),
-            ('GRID',(0,0),(-1,-1),1,colors.grey),
-            ('FONTSIZE', (0,0), (-1,-1), 8)
-        ]))
-        elements.append(t)
-        doc.build(elements)
+            data.append([str(r.get('descricao_acao') or ""), str(r.get('quem') or ""), str(r.get('prazo') or ""), str(r.get('status') or "")])
+        t = Table(data); t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.navy),('TEXTCOLOR',(0,0),(-1,0),colors.whitesmoke),('GRID',(0,0),(-1,-1),1,colors.grey)]))
+        elements.append(t); doc.build(elements)
         return buf.getvalue()
 
     st.download_button("📥 Gerar PDF", gerar_pdf(acoes), "plano_5w2h.pdf", "application/pdf")
 else:
-    st.info("Nenhuma ação no momento.")
+    st.info("Nenhuma ação cadastrada.")
