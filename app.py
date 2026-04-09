@@ -3,9 +3,10 @@ import pymysql
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, date
+import io
 
 # 1. CONFIGURAÇÃO DA PÁGINA
-st.set_page_config(page_title="Sistema 5W2H Profissional", layout="wide")
+st.set_page_config(page_title="Lavo e Levo - Plano Estratégico", layout="wide")
 
 # 2. FUNÇÃO DE CONEXÃO
 def executar_db(sql, params=None, retorno=True):
@@ -41,16 +42,19 @@ if 'confirmar_excluir' not in st.session_state: st.session_state.confirmar_exclu
 
 # --- LOGIN ---
 if not st.session_state['logado']:
-    st.title("🔐 Login - Gestão 5W2H")
-    u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        res = executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
-        if res:
-            st.session_state['logado'], st.session_state['nivel'] = True, res[0].get('nivel', 'Comum')
-            st.rerun()
+    st.markdown("<h2 style='text-align: center;'>🧺 Lavanderia Lavo e Levo</h2>", unsafe_allow_html=True)
+    with st.form("login_form"):
+        u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
+        if st.form_submit_button("Entrar no Sistema"):
+            res = executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
+            if res:
+                st.session_state['logado'], st.session_state['nivel'] = True, res[0].get('nivel', 'Comum')
+                st.rerun()
+            else:
+                st.error("Dados de acesso incorretos.")
     st.stop()
 
-# --- DADOS ---
+# --- CARREGAR DADOS ---
 @st.cache_data(ttl=10)
 def buscar_dados():
     return executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario ORDER BY A.prazo ASC")
@@ -58,9 +62,17 @@ def buscar_dados():
 dados_db = buscar_dados()
 df = pd.DataFrame(dados_db) if dados_db else pd.DataFrame()
 
-# --- INTERFACE ---
-st.title("🚀 Gestão Estratégica 5W2H")
-tab_lista, tab_graficos = st.tabs(["📝 Lançamentos", "📊 Análise"])
+# --- TITULO PERSONALIZADO ---
+st.markdown("""
+    <h1 style='text-align: center; color: #1E3A8A; padding-bottom: 5px;'>
+        🧺 PLANO ESTRATÉGICO DA LAVANDERIA LAVO E LEVO
+    </h1>
+    <p style='text-align: center; color: #6B7280; font-size: 1.1em;'>Gestão 5W2H e Controle de Performance</p>
+    <hr style='border: 1px solid #3B82F6; margin-bottom: 30px;'>
+""", unsafe_allow_html=True)
+
+# --- ABAS ---
+tab_lista, tab_graficos = st.tabs(["📝 Lançamentos e Controle", "📊 Análise de Performance"])
 
 with tab_lista:
     # FORMULÁRIO (CADASTRO / EDIÇÃO)
@@ -76,17 +88,17 @@ with tab_lista:
         with st.form("form_5w2h", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
-                what = st.text_input("O que?", value=dados_edit['descricao_acao'] if dados_edit else "")
-                why = st.text_area("Por que?", value=dados_edit['porque'] if dados_edit else "")
+                what = st.text_input("What (O que?)", value=dados_edit['descricao_acao'] if dados_edit else "")
+                why = st.text_area("Why (Por que?)", value=dados_edit['porque'] if dados_edit else "")
                 prio = st.select_slider("Prioridade", options=["Baixa", "Média", "Alta"], value=dados_edit['prioridade'] if dados_edit else "Média")
             with c2:
-                who = st.selectbox("Quem?", list(dict_u.keys()))
-                when = st.date_input("Prazo", dados_edit['prazo'] if dados_edit else date.today(), format="DD/MM/YYYY")
-                cost = st.number_input("Custo R$", value=float(dados_edit['quanto_custa'] or 0) if dados_edit else 0.0)
+                who = st.selectbox("Who (Quem?)", list(dict_u.keys()))
+                when = st.date_input("When (Prazo)", dados_edit['prazo'] if dados_edit else date.today(), format="DD/MM/YYYY")
+                cost = st.number_input("How Much (Custo R$)", value=float(dados_edit['quanto_custa'] or 0) if dados_edit else 0.0)
                 status = st.selectbox("Status", ["Em análise", "Em andamento", "Concluído"], index=0)
-                obs = st.text_input("Obs", value=dados_edit['observacoes'] if dados_edit else "")
+                obs = st.text_input("Observações", value=dados_edit['observacoes'] if dados_edit else "")
 
-            if st.form_submit_button("💾 Salvar"):
+            if st.form_submit_button("💾 Salvar Plano de Ação"):
                 if st.session_state.edit_id:
                     sql = "UPDATE Acoes SET descricao_acao=%s, porque=%s, id_responsavel=%s, prazo=%s, quanto_custa=%s, status=%s, prioridade=%s, observacoes=%s WHERE id_acao=%s"
                     executar_db(sql, (what, why, dict_u[who], when, cost, status, prio, obs, st.session_state.edit_id), False)
@@ -96,13 +108,14 @@ with tab_lista:
                     executar_db(sql, (what, why, dict_u[who], when, cost, status, prio, obs), False)
                 st.cache_data.clear()
                 st.rerun()
+        
         if st.session_state.edit_id: 
             if st.button("❌ Cancelar Edição"):
                 st.session_state.edit_id = None
                 st.rerun()
 
     # LISTAGEM
-    st.subheader("📋 Ações Detalhadas")
+    st.subheader("📋 Ações e Prazos")
     if not df.empty:
         hoje = date.today()
         for _, row in df.iterrows():
@@ -112,23 +125,21 @@ with tab_lista:
             
             with st.container():
                 c1, c2, c3, c4 = st.columns([0.02, 0.78, 0.1, 0.1])
-                c1.markdown(f"<div style='background-color:{cor}; height:70px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
+                c1.markdown(f"<div style='background-color:{cor}; height:75px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
                 with c2:
                     st.write(f"**{row['descricao_acao']}** | {row['quem']} | **{dt_br}**")
                     st.caption(f"Status: {row['status']} | Prioridade: {row['prioridade']} | R$ {float(row['quanto_custa'] or 0):,.2f}")
+                    if row['observacoes']: st.info(f"💬 {row['observacoes']}")
                 
-                # BOTÃO EDITAR
                 if c3.button("✏️", key=f"ed_{row['id_acao']}"):
                     st.session_state.edit_id = row['id_acao']
                     st.rerun()
                 
-                # BOTÃO EXCLUIR COM CONFIRMAÇÃO
                 if c4.button("🗑️", key=f"btn_ex_{row['id_acao']}"):
                     st.session_state.confirmar_excluir = row['id_acao']
                 
-                # AREA DE CONFIRMAÇÃO
                 if st.session_state.confirmar_excluir == row['id_acao']:
-                    st.warning(f"Confirmar exclusão de: {row['id_acao']}?")
+                    st.warning(f"Excluir item {row['id_acao']}?")
                     ca, cb = st.columns(2)
                     if ca.button("✅ SIM", key=f"sim_{row['id_acao']}"):
                         executar_db("DELETE FROM Acoes WHERE id_acao=%s", (row['id_acao'],), False)
@@ -139,17 +150,28 @@ with tab_lista:
                         st.session_state.confirmar_excluir = None
                         st.rerun()
                 st.divider()
+    else:
+        st.info("Nenhuma ação registrada para a lavanderia.")
 
 with tab_graficos:
     if not df.empty:
-        st.subheader("📊 Indicadores")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Ações", len(df))
+        st.subheader("📊 Indicadores da Lavo e Levo")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ações Ativas", len(df))
         m2.metric("Concluídas", len(df[df['status'] == 'Concluído']))
-        m3.metric("Total", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
+        m3.metric("Inv. Total", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
+        m4.metric("🚨 Atrasos", len(df[(pd.to_datetime(df['prazo']).dt.date < hoje) & (df['status'] != 'Concluído')]))
         
         g1, g2 = st.columns(2)
-        g1.plotly_chart(px.pie(df, names='status', title="Status"), use_container_width=True)
-        g2.plotly_chart(px.bar(df, x='prioridade', y='quanto_custa', title="Investimento por Prioridade"), use_container_width=True)
+        with g1:
+            fig1 = px.pie(df, names='status', title="Distribuição por Status", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig1, use_container_width=True)
+        with g2:
+            fig2 = px.bar(df, x='prioridade', y='quanto_custa', color='status', title="Investimento por Prioridade", barmode='group')
+            st.plotly_chart(fig2, use_container_width=True)
 
-st.sidebar.button("Logout", on_click=lambda: st.session_state.update({"logado": False}))
+# BARRA LATERAL
+st.sidebar.markdown(f"**Usuário:** {st.session_state.get('user', 'Admin')}")
+if st.sidebar.button("Sair do Sistema"):
+    st.session_state['logado'] = False
+    st.rerun()
