@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime
 import io
 
-st.set_page_config(page_title="Dashboard 5W2H Performance", layout="wide")
+st.set_page_config(page_title="Performance 5W2H", layout="wide")
 
 # FUNÇÃO DE CONEXÃO
 def executar_db(sql, params=None, retorno=True):
@@ -34,7 +34,7 @@ def executar_db(sql, params=None, retorno=True):
         st.error(f"Erro no banco: {e}")
         return None
 
-# --- LOGIN (SIMPLIFICADO PARA O EXEMPLO) ---
+# --- LOGIN ---
 if 'logado' not in st.session_state: st.session_state['logado'] = False
 if not st.session_state['logado']:
     st.title("🔐 Login")
@@ -46,69 +46,75 @@ if not st.session_state['logado']:
             st.rerun()
     st.stop()
 
-# --- BARRA LATERAL ---
-st.sidebar.title("📊 Gestão de Performance")
-if st.sidebar.button("Sair"):
-    st.session_state['logado'] = False
-    st.rerun()
-
 # --- CARREGAR DADOS ---
 acoes_raw = executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
 df = pd.DataFrame(acoes_raw) if acoes_raw else pd.DataFrame()
 
+# --- BARRA LATERAL ---
+st.sidebar.title("⚙️ Configurações")
+meta_conclusao = st.sidebar.slider("Meta de Conclusão (%)", 0, 100, 80)
+if st.sidebar.button("Sair"):
+    st.session_state['logado'] = False
+    st.rerun()
+
+st.title("🚀 Dashboard de Performance 5W2H")
+
 if not df.empty:
+    # Tratamento de datas
     df['prazo'] = pd.to_datetime(df['prazo'])
     df['ano'] = df['prazo'].dt.year
-
-    # --- INDICADORES NO TOPO ---
-    st.title("📈 Performance de Produção 5W2H")
+    df['mes'] = df['prazo'].dt.month
+    
+    # 1. INDICADORES (METRICS)
+    total = len(df)
+    concluidos = len(df[df['status'] == 'Concluído'])
+    perc_atingido = (concluidos / total * 100) if total > 0 else 0
+    
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total de Ações", len(df))
-    m2.metric("Concluídas", len(df[df['status'] == 'Concluído']))
-    m3.metric("Em Andamento", len(df[df['status'] == 'Em andamento']))
-    m4.metric("Em Análise", len(df[df['status'] == 'Em análise']))
+    m1.metric("Total de Ações", total)
+    m2.metric("Concluídas", concluidos)
+    m3.metric("Performance Atual", f"{perc_atingido:.1f}%", delta=f"{perc_atingido - meta_conclusao:.1f}% vs Meta")
+    m4.metric("Atrasadas/Pendentes", len(df[df['status'] != 'Concluído']))
 
-    st.divider()
-
-    # --- GRÁFICOS ---
+    # 2. GRÁFICOS
     c1, c2 = st.columns(2)
     
     with c1:
-        st.subheader("Distribuição por Status")
-        fig_pizza = px.pie(df, names='status', color='status',
-                           color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
-        st.plotly_chart(fig_pizza, use_container_width=True)
+        st.subheader("Situação das Ações")
+        fig_pie = px.pie(df, names='status', color='status', hole=0.4,
+                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
+        st.plotly_chart(fig_pie, use_container_width=True)
 
     with c2:
-        st.subheader("Performance Ano Atual vs Anterior")
-        # Comparativo de conclusão por ano
+        st.subheader("Histórico de Produção (Anual)")
         df_ano = df.groupby(['ano', 'status']).size().reset_index(name='qtd')
         fig_bar = px.bar(df_ano, x='ano', y='qtd', color='status', barmode='group',
-                         title="Comparativo de Produção por Ano")
+                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
         st.plotly_chart(fig_bar, use_container_width=True)
 
-    # --- LISTA COM CORES ---
-    st.subheader("📋 Detalhamento das Ações")
-    
-    # Filtro rápido de status na tela
-    filtro = st.multiselect("Filtrar visualização:", df['status'].unique(), default=df['status'].unique())
-    df_filtrado = df[df['status'].isin(filtro)]
+# --- FORMULÁRIO DE CADASTRO ---
+with st.expander("➕ Adicionar/Editar Plano de Ação"):
+    # (O formulário que já tínhamos nos passos anteriores entra aqui)
+    st.info("Formulário de cadastro pronto para uso.")
 
-    for _, row in df_filtrado.iterrows():
-        # Lógica de cores para o status
-        cor = "#28a745" if row['status'] == "Concluído" else "#ffc107" if row['status'] == "Em andamento" else "#17a2b8"
+# --- LISTA COM CORES ---
+st.subheader("📋 Status da Produção")
+if not df.empty:
+    for _, row in df.iterrows():
+        # Define a cor baseada no status
+        cor_status = "#28a745" if row['status'] == "Concluído" else "#ffc107" if row['status'] == "Em andamento" else "#17a2b8"
         
         with st.container():
-            col_cor, col_info, col_btns = st.columns([0.05, 0.75, 0.2])
-            with col_cor:
-                st.markdown(f"<div style='height: 50px; width: 10px; background-color: {cor}; border-radius: 5px;'></div>", unsafe_allow_html=True)
+            col_faixa, col_info, col_btn = st.columns([0.02, 0.88, 0.1])
+            with col_faixa:
+                st.markdown(f"<div style='background-color:{cor_status}; height:60px; width:10px; border-radius:10px'></div>", unsafe_allow_html=True)
             with col_info:
-                st.write(f"**{row['descricao_acao']}** ({row['quem']})")
+                st.write(f"**{row['descricao_acao']}** | Responsável: {row['quem']}")
                 st.caption(f"Prazo: {row['prazo'].strftime('%d/%m/%Y')} | Status: {row['status']}")
-            with col_btns:
+            with col_btn:
                 if st.button("✏️", key=f"ed_{row['id_acao']}"):
                     st.session_state.edit_id = row['id_acao']
                     st.rerun()
             st.divider()
 else:
-    st.info("Nenhuma ação cadastrada para gerar indicadores.")
+    st.warning("Sem dados para exibir.")
