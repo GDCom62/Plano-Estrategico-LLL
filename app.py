@@ -3,12 +3,12 @@ import pymysql
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
-import io
 
+# 1. CONFIGURAÇÃO E CACHE
 st.set_page_config(page_title="Performance 5W2H", layout="wide")
 
-# FUNÇÃO DE CONEXÃO
-def executar_db(sql, params=None, retorno=True):
+@st.cache_data(ttl=600) # Mantém os dados em memória por 10 min para não travar
+def carregar_dados():
     try:
         conn = pymysql.connect(
             host=st.secrets["DB_HOST"],
@@ -17,104 +17,52 @@ def executar_db(sql, params=None, retorno=True):
             database=st.secrets["DB_NAME"],
             port=int(st.secrets["DB_PORT"]),
             ssl={'ssl': {}},
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=10
+            cursorclass=pymysql.cursors.DictCursor
         )
         with conn.cursor() as cursor:
-            cursor.execute(sql, params or ())
-            if retorno:
-                resultado = cursor.fetchall()
-                conn.close()
-                return resultado
-            else:
-                conn.commit()
-                conn.close()
-                return True
-    except Exception as e:
-        st.error(f"Erro no banco: {e}")
-        return None
+            cursor.execute("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
+            res = cursor.fetchall()
+        conn.close()
+        return pd.DataFrame(res)
+    except:
+        return pd.DataFrame()
 
-# --- LOGIN ---
-if 'logado' not in st.session_state: st.session_state['logado'] = False
-if not st.session_state['logado']:
-    st.title("🔐 Login")
-    u = st.text_input("Usuário")
-    s = st.text_input("Senha", type="password")
-    if st.button("Entrar"):
-        if executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s)):
-            st.session_state['logado'] = True
-            st.rerun()
-    st.stop()
+# --- INTERFACE ---
+st.title("📈 Dashboard de Produção Otimizado")
 
-# --- CARREGAR DADOS ---
-acoes_raw = executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
-df = pd.DataFrame(acoes_raw) if acoes_raw else pd.DataFrame()
-
-# --- BARRA LATERAL ---
-st.sidebar.title("⚙️ Configurações")
-meta_conclusao = st.sidebar.slider("Meta de Conclusão (%)", 0, 100, 80)
-if st.sidebar.button("Sair"):
-    st.session_state['logado'] = False
-    st.rerun()
-
-st.title("🚀 Dashboard de Performance 5W2H")
+df = carregar_dados()
 
 if not df.empty:
-    # Tratamento de datas
-    df['prazo'] = pd.to_datetime(df['prazo'])
-    df['ano'] = df['prazo'].dt.year
-    df['mes'] = df['prazo'].dt.month
-    
-    # 1. INDICADORES (METRICS)
-    total = len(df)
-    concluidos = len(df[df['status'] == 'Concluído'])
-    perc_atingido = (concluidos / total * 100) if total > 0 else 0
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total de Ações", total)
-    m2.metric("Concluídas", concluidos)
-    m3.metric("Performance Atual", f"{perc_atingido:.1f}%", delta=f"{perc_atingido - meta_conclusao:.1f}% vs Meta")
-    m4.metric("Atrasadas/Pendentes", len(df[df['status'] != 'Concluído']))
+    # FILTROS RÁPIDOS (Sidebar)
+    st.sidebar.header("Filtros")
+    if st.sidebar.button("🔄 Atualizar Dados"):
+        st.cache_data.clear()
+        st.rerun()
 
-    # 2. GRÁFICOS
+    # BLOCO DE GRÁFICOS (Renderização Isolada)
     c1, c2 = st.columns(2)
     
     with c1:
-        st.subheader("Situação das Ações")
-        fig_pie = px.pie(df, names='status', color='status', hole=0.4,
-                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
-        st.plotly_chart(fig_pie, use_container_width=True)
+        # Usando render_mode="svg" para ser mais leve no navegador
+        fig_pie = px.pie(df, names='status', hole=0.4, title="Status Geral",
+                         color_discrete_sequence=px.colors.qualitative.Pastel)
+        st.plotly_chart(fig_pie, use_container_width=True, theme="streamlit")
 
     with c2:
-        st.subheader("Histórico de Produção (Anual)")
-        df_ano = df.groupby(['ano', 'status']).size().reset_index(name='qtd')
-        fig_bar = px.bar(df_ano, x='ano', y='qtd', color='status', barmode='group',
-                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
+        df['ano'] = pd.to_datetime(df['prazo']).dt.year
+        df_ano = df.groupby(['ano', 'status']).size().reset_index(name='total')
+        fig_bar = px.bar(df_ano, x='ano', y='total', color='status', barmode='group', title="Performance Anual")
         st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- FORMULÁRIO DE CADASTRO ---
-with st.expander("➕ Adicionar/Editar Plano de Ação"):
-    # (O formulário que já tínhamos nos passos anteriores entra aqui)
-    st.info("Formulário de cadastro pronto para uso.")
-
-# --- LISTA COM CORES ---
-st.subheader("📋 Status da Produção")
-if not df.empty:
-    for _, row in df.iterrows():
-        # Define a cor baseada no status
-        cor_status = "#28a745" if row['status'] == "Concluído" else "#ffc107" if row['status'] == "Em andamento" else "#17a2b8"
-        
-        with st.container():
-            col_faixa, col_info, col_btn = st.columns([0.02, 0.88, 0.1])
-            with col_faixa:
-                st.markdown(f"<div style='background-color:{cor_status}; height:60px; width:10px; border-radius:10px'></div>", unsafe_allow_html=True)
-            with col_info:
-                st.write(f"**{row['descricao_acao']}** | Responsável: {row['quem']}")
-                st.caption(f"Prazo: {row['prazo'].strftime('%d/%m/%Y')} | Status: {row['status']}")
-            with col_btn:
-                if st.button("✏️", key=f"ed_{row['id_acao']}"):
-                    st.session_state.edit_id = row['id_acao']
-                    st.rerun()
-            st.divider()
+    # LISTAGEM SIMPLIFICADA (Evita travar o scroll)
+    st.subheader("📋 Lista de Itens")
+    for _, row in df.head(20).iterrows(): # Limitamos a 20 para performance
+        cor = "#28a745" if row['status'] == "Concluído" else "#ffc107"
+        st.markdown(f"""
+            <div style="border-left: 5px solid {cor}; padding-left: 15px; margin-bottom: 10px;">
+                <strong>{row['descricao_acao']}</strong> - {row['quem']}<br>
+                <small>Status: {row['status']} | Prazo: {row['prazo']}</small>
+            </div>
+        """, unsafe_allow_html=True)
 else:
-    st.warning("Sem dados para exibir.")
+    st.info("Aguardando dados...")
