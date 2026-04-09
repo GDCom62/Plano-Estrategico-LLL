@@ -2,3 +2,4 @@ streamlit
 PyMySQL
 pandas
 reportlab
+plotly
