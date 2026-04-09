@@ -6,7 +6,7 @@ from datetime import datetime, date
 import io
 
 # 1. CONFIGURAÇÃO
-st.set_page_config(page_title="Gestão 5W2H Profissional", layout="wide")
+st.set_page_config(page_title="Sistema 5W2H Profissional", layout="wide")
 
 def executar_db(sql, params=None, retorno=True):
     try:
@@ -46,7 +46,7 @@ if not st.session_state['logado']:
     st.stop()
 
 # --- CARREGAR DADOS ---
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def buscar_dados():
     return executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
 
@@ -54,23 +54,17 @@ dados_db = buscar_dados()
 df_total = pd.DataFrame(dados_db) if dados_db else pd.DataFrame()
 
 # --- BARRA LATERAL ---
-st.sidebar.title("🎯 Gestão de Foco")
+st.sidebar.title("📊 Painel de Controle")
 if not df_total.empty:
     df_total['prazo'] = pd.to_datetime(df_total['prazo']).dt.date
-    # Filtro de Prioridade
-    f_prio = st.sidebar.multiselect("Filtrar Prioridade:", ["Alta", "Média", "Baixa"], default=["Alta", "Média", "Baixa"])
-    # Filtro de Data
-    d_ini = st.sidebar.date_input("Início", df_total['prazo'].min())
-    d_fim = st.sidebar.date_input("Fim", df_total['prazo'].max())
+    f_prio = st.sidebar.multiselect("Prioridade:", ["Alta", "Média", "Baixa"], default=["Alta", "Média", "Baixa"])
+    df = df_total[df_total['prioridade'].isin(f_prio)]
     
-    df = df_total[(df_total['prazo'] >= d_ini) & (df_total['prazo'] <= d_fim) & (df_total['prioridade'].isin(f_prio))]
-
-    st.sidebar.divider()
     # Exportação Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='5W2H')
-    st.sidebar.download_button("📊 Exportar Excel", output.getvalue(), "plano_5w2h.xlsx")
+        df.to_excel(writer, index=False, sheet_name='Gestao_5W2H')
+    st.sidebar.download_button("📊 Exportar Excel", output.getvalue(), "relatorio_5w2h.xlsx")
 else:
     df = df_total
 
@@ -79,67 +73,62 @@ if st.sidebar.button("🚪 Sair"):
     st.rerun()
 
 # --- DASHBOARD ---
-st.title("🚀 Dashboard 5W2H & Performance")
+st.title("🚀 Gestão Estratégica 5W2H")
 
 if not df.empty:
     hoje = date.today()
-    # KPIs
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ações Filtradas", len(df))
+    c1.metric("Total Ações", len(df))
     c2.metric("Alta Prioridade", len(df[df['prioridade'] == 'Alta']))
-    c3.metric("Investimento", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
+    c3.metric("Investimento Total", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
     atrasos = len(df[(df['prazo'] < hoje) & (df['status'] != 'Concluído')])
-    c4.metric("🚨 Atrasadas", atrasos)
-
-    # Gráficos
-    g1, g2 = st.columns(2)
-    with g1:
-        fig_prio = px.bar(df, x='prioridade', title="Distribuição por Prioridade", color='prioridade',
-                          color_discrete_map={'Alta':'#dc3545', 'Média':'#ffc107', 'Baixa':'#28a745'})
-        st.plotly_chart(fig_prio, use_container_width=True)
-    with g2:
-        fig_status = px.pie(df, names='status', title="Status das Ações", hole=0.4)
-        st.plotly_chart(fig_status, use_container_width=True)
+    c4.metric("🚨 Em Atraso", atrasos, delta_color="inverse")
 
 # --- FORMULÁRIO ---
-with st.expander("➕ Nova Ação Estratégica"):
+with st.expander("➕ Nova Ação / Comentário"):
     res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
     dict_u = {user['nome']: user['id_usuario'] for user in res_u} if res_u else {}
-    with st.form("form_prio"):
+    with st.form("form_obs"):
         col1, col2 = st.columns(2)
         with col1:
-            what = st.text_input("O que?")
+            what = st.text_input("O que fazer?")
             prio = st.select_slider("Prioridade", options=["Baixa", "Média", "Alta"], value="Média")
-            how_much = st.number_input("Custo R$", min_value=0.0)
+            obs = st.text_area("Observações / Justificativas", placeholder="Descreva o andamento ou motivos de atraso...")
         with col2:
-            who = st.selectbox("Quem?", list(dict_u.keys()))
+            who = st.selectbox("Responsável", list(dict_u.keys()))
             when = st.date_input("Prazo")
+            cost = st.number_input("Custo R$", min_value=0.0)
             status = st.selectbox("Status", ["Em análise", "Em andamento", "Concluído"])
         
-        if st.form_submit_button("Salvar Ação"):
-            executar_db("INSERT INTO Acoes (descricao_acao, id_responsavel, prazo, quanto_custa, status, prioridade) VALUES (%s,%s,%s,%s,%s,%s)", 
-                       (what, dict_u[who], when, how_much, status, prio), retorno=False)
+        if st.form_submit_button("Salvar Plano"):
+            sql = "INSERT INTO Acoes (descricao_acao, id_responsavel, prazo, quanto_custa, status, prioridade, observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s)"
+            executar_db(sql, (what, dict_u[who], when, cost, status, prio, obs), retorno=False)
             st.cache_data.clear()
+            st.success("Item registrado com sucesso!")
             st.rerun()
 
 # --- LISTAGEM ---
-st.subheader("📋 Plano de Ação")
+st.subheader("📋 Plano de Ação Detalhado")
 if not df.empty:
     for _, row in df.iterrows():
-        # Lógica visual
         hoje = date.today()
         atraso = row['prazo'] < hoje and row['status'] != 'Concluído'
-        # Cor da prioridade
-        prio_cor = "🔴" if row['prioridade'] == "Alta" else "🟡" if row['prioridade'] == "Média" else "🟢"
+        prio_icon = "🔴" if row['prioridade'] == "Alta" else "🟡" if row['prioridade'] == "Média" else "🟢"
         barra_cor = "#dc3545" if atraso else "#28a745" if row['status'] == "Concluído" else "#ffc107"
         
         with st.container():
             c1, c2, c3 = st.columns([0.02, 0.88, 0.1])
-            c1.markdown(f"<div style='background-color:{barra_cor}; height:60px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
-            c2.write(f"{prio_cor} **{row['descricao_acao']}** | Resp: {row['quem']} | Custo: R$ {row['quanto_custa']:,.2f}")
-            c2.caption(f"Prioridade: {row['prioridade']} | Prazo: {row['prazo'].strftime('%d/%m/%Y')} | Status: {row['status']} {'⚠️ ATRASADA' if atraso else ''}")
-            if c3.button("🗑️", key=f"d_{row['id_acao']}"):
-                executar_db("DELETE FROM Acoes WHERE id_acao=%s", (row['id_acao'],), retorno=False)
-                st.cache_data.clear()
-                st.rerun()
+            c1.markdown(f"<div style='background-color:{barra_cor}; height:80px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
+            with c2:
+                st.write(f"{prio_icon} **{row['descricao_acao']}** | Resp: {row['quem']} | R$ {row['quanto_custa']:,.2f}")
+                if row['observacoes']:
+                    st.info(f"💬 **Obs:** {row['observacoes']}")
+                st.caption(f"Prazo: {row['prazo'].strftime('%d/%m/%Y')} | Status: {row['status']} {'⚠️ ATRASADA' if atraso else ''}")
+            with c3:
+                if st.button("🗑️", key=f"d_{row['id_acao']}"):
+                    executar_db("DELETE FROM Acoes WHERE id_acao=%s", (row['id_acao'],), retorno=False)
+                    st.cache_data.clear()
+                    st.rerun()
             st.divider()
+else:
+    st.info("Nenhuma ação cadastrada.")
