@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime, date
 
 # 1. CONFIGURAÇÃO
-st.set_page_config(page_title="Performance, Custos & Prazos 5W2H", layout="wide")
+st.set_page_config(page_title="Gestão 5W2H - Filtros Temporais", layout="wide")
 
 def executar_db(sql, params=None, retorno=True):
     try:
@@ -50,45 +50,62 @@ def buscar_dados():
     return executar_db("SELECT A.*, U.nome as quem FROM Acoes A JOIN Usuarios U ON A.id_responsavel = U.id_usuario")
 
 dados = buscar_dados()
-df = pd.DataFrame(dados) if dados else pd.DataFrame()
+df_total = pd.DataFrame(dados) if dados else pd.DataFrame()
+
+# --- BARRA LATERAL (FILTROS DE PERÍODO) ---
+st.sidebar.title("📅 Filtros de Período")
+if not df_total.empty:
+    df_total['prazo'] = pd.to_datetime(df_total['prazo']).dt.date
+    min_date = df_total['prazo'].min()
+    max_date = df_total['prazo'].max()
+    
+    data_inicio = st.sidebar.date_input("Data Início", min_date)
+    data_fim = st.sidebar.date_input("Data Fim", max_date)
+
+    # Aplicar Filtro de Data
+    df = df_total[(df_total['prazo'] >= data_inicio) & (df_total['prazo'] <= data_fim)]
+else:
+    df = df_total
+
+if st.sidebar.button("🚪 Sair"):
+    st.session_state['logado'] = False
+    st.rerun()
 
 # --- DASHBOARD ---
-st.title("🚀 Dashboard Estratégico 5W2H")
+st.title("🚀 Performance 5W2H por Período")
 
 if not df.empty:
-    df['prazo'] = pd.to_datetime(df['prazo']).dt.date
-    df['quanto_custa'] = pd.to_numeric(df['quanto_custa']).fillna(0)
     hoje = date.today()
+    df['quanto_custa'] = pd.to_numeric(df['quanto_custa']).fillna(0)
     
-    # Identificar Atrasados (Data < Hoje E Status != Concluído)
-    atrasados_df = df[(df['prazo'] < hoje) & (df['status'] != 'Concluído')]
-    qtd_atrasados = len(atrasados_df)
-
-    # 1. INDICADORES NO TOPO
+    # KPIs
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total de Ações", len(df))
-    m2.metric("Concluídas", len(df[df['status'] == 'Concluído']))
-    m3.metric("Investimento Total", f"R$ {df['quanto_custa'].sum():,.2f}")
-    # Alerta visual no card de atrasados
-    m4.metric("🚨 Em Atraso", qtd_atrasados, delta=f"{qtd_atrasados} crítico(s)" if qtd_atrasados > 0 else None, delta_color="inverse")
+    m1.metric("Ações no Período", len(df))
+    concluidos = len(df[df['status'] == 'Concluído'])
+    m2.metric("Concluídas", concluidos)
+    m3.metric("Investimento", f"R$ {df['quanto_custa'].sum():,.2f}")
+    
+    atrasados = len(df[(df['prazo'] < hoje) & (df['status'] != 'Concluído')])
+    m4.metric("🚨 Atrasadas", atrasados, delta_color="inverse")
 
-    # 2. GRÁFICOS
+    # Gráficos
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Situação das Ações")
-        fig_pie = px.pie(df, names='status', hole=0.4, color='status',
-                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8', 'Atrasado':'#dc3545'})
+        fig_pie = px.pie(df, names='status', title="Status das Ações no Período", hole=0.4,
+                         color_discrete_map={'Concluído':'#28a745', 'Em andamento':'#ffc107', 'Em análise':'#17a2b8'})
         st.plotly_chart(fig_pie, use_container_width=True)
     with c2:
-        st.subheader("Investimento por Responsável")
-        fig_cost = px.bar(df, x='quem', y='quanto_custa', color='status', barmode='group')
-        st.plotly_chart(fig_cost, use_container_width=True)
+        # Evolução Mensal de Custos
+        df_temp = df.copy()
+        df_temp['mes_ano'] = pd.to_datetime(df_temp['prazo']).dt.strftime('%m/%Y')
+        fig_evol = px.line(df_temp.sort_values('prazo'), x='prazo', y='quanto_custa', title="Distribuição Financeira no Tempo", markers=True)
+        st.plotly_chart(fig_evol, use_container_width=True)
 
 # --- FORMULÁRIO ---
-res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
-dict_u = {user['nome']: user['id_usuario'] for user in res_u} if res_u else {}
-
 with st.expander("➕ Nova Ação (Checklist 5W2H)"):
+    res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
+    dict_u = {user['nome']: user['id_usuario'] for user in res_u} if res_u else {}
+    
     with st.form("form_novo"):
         col1, col2 = st.columns(2)
         with col1:
@@ -106,26 +123,22 @@ with st.expander("➕ Nova Ação (Checklist 5W2H)"):
             st.cache_data.clear()
             st.rerun()
 
-# --- LISTA COM ALERTA DE ATRASO ---
-st.subheader("📋 Detalhamento e Prazos")
+# --- LISTAGEM ---
+st.subheader("📋 Detalhes do Período Selecionado")
 if not df.empty:
     for _, row in df.iterrows():
-        # Lógica de cor e alerta
-        esta_atrasado = row['prazo'] < hoje and row['status'] != 'Concluído'
-        cor_status = "#dc3545" if esta_atrasado else ("#28a745" if row['status'] == "Concluído" else "#ffc107")
-        txt_atraso = "⚠️ **EM ATRASO**" if esta_atrasado else ""
+        atraso = row['prazo'] < hoje and row['status'] != 'Concluído'
+        cor = "#dc3545" if atraso else ("#28a745" if row['status'] == "Concluído" else "#ffc107")
         
         with st.container():
             c1, c2, c3 = st.columns([0.02, 0.78, 0.2])
-            c1.markdown(f"<div style='background-color:{cor_status}; height:60px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
-            c2.write(f"**{row['descricao_acao']}** | {row['quem']} | R$ {row['quanto_custa']:,.2f} {txt_atraso}")
+            c1.markdown(f"<div style='background-color:{cor}; height:60px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
+            c2.write(f"**{row['descricao_acao']}** | {row['quem']} | R$ {row['quanto_custa']:,.2f} {'🔴 **ATRASADA**' if atraso else ''}")
             c2.caption(f"Prazo: {row['prazo'].strftime('%d/%m/%Y')} | Status: `{row['status']}`")
             if c3.button("🗑️", key=f"del_{row['id_acao']}"):
                 executar_db("DELETE FROM Acoes WHERE id_acao=%s", (row['id_acao'],), retorno=False)
                 st.cache_data.clear()
                 st.rerun()
             st.divider()
-
-if st.sidebar.button("Sair"):
-    st.session_state['logado'] = False
-    st.rerun()
+else:
+    st.warning("Nenhuma ação encontrada para este período.")
