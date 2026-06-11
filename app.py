@@ -35,6 +35,16 @@ def executar_db(sql, params=None, retorno=True):
         st.error(f"Erro no banco: {e}")
         return None
 
+# --- VERIFICAÇÃO AUTOMÁTICA DA COLUNA 'COMO' ---
+# Garante que a coluna nova exista no banco sem precisar rodar comandos manuais externos
+if 'coluna_verificada' not in st.session_state:
+    check_sql = "SHOW COLUMNS FROM Acoes LIKE 'como'"
+    coluna_existe = executar_db(check_sql)
+    if not coluna_existe:
+        alter_sql = "ALTER TABLE Acoes ADD COLUMN como TEXT AFTER porque"
+        executar_db(alter_sql, retorno=False)
+    st.session_state['coluna_verificada'] = True
+
 # 3. CONTROLE DE SESSÃO
 if 'logado' not in st.session_state: st.session_state['logado'] = False
 if 'edit_id' not in st.session_state: st.session_state.edit_id = None
@@ -48,7 +58,8 @@ if not st.session_state['logado']:
         if st.form_submit_button("Entrar no Sistema"):
             res = executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
             if res:
-                st.session_state['logado'], st.session_state['nivel'] = True, res[0].get('nivel', 'Comum')
+                nivel_usuario = res[0].get('nivel', 'Comum') if isinstance(res, list) and len(res) > 0 else 'Comum'
+                st.session_state['logado'], st.session_state['nivel'] = True, nivel_usuario
                 st.rerun()
             else:
                 st.error("Dados de acesso incorretos.")
@@ -61,6 +72,7 @@ def buscar_dados():
 
 dados_db = buscar_dados()
 df = pd.DataFrame(dados_db) if dados_db else pd.DataFrame()
+hoje = date.today()
 
 # --- TITULO PERSONALIZADO ---
 st.markdown("""
@@ -90,22 +102,36 @@ with tab_lista:
             with c1:
                 what = st.text_input("What (O que?)", value=dados_edit['descricao_acao'] if dados_edit else "")
                 why = st.text_area("Why (Por que?)", value=dados_edit['porque'] if dados_edit else "")
+                how = st.text_area("How (Como?)", value=dados_edit['como'] if dados_edit and 'como' in dados_edit else "")
                 prio = st.select_slider("Prioridade", options=["Baixa", "Média", "Alta"], value=dados_edit['prioridade'] if dados_edit else "Média")
             with c2:
-                who = st.selectbox("Who (Quem?)", list(dict_u.keys()))
+                nome_padrao = "Selecione"
+                if dados_edit:
+                    for nome_u, id_u in dict_u.items():
+                        if id_u == dados_edit['id_responsavel']:
+                            nome_padrao = nome_u
+                
+                lista_usuarios = list(dict_u.keys())
+                index_u = lista_usuarios.index(nome_padrao) if nome_padrao in lista_usuarios else 0
+                
+                who = st.selectbox("Who (Quem?)", lista_usuarios, index=index_u)
                 when = st.date_input("When (Prazo)", dados_edit['prazo'] if dados_edit else date.today(), format="DD/MM/YYYY")
                 cost = st.number_input("How Much (Custo R$)", value=float(dados_edit['quanto_custa'] or 0) if dados_edit else 0.0)
-                status = st.selectbox("Status", ["Em análise", "Em andamento", "Concluído"], index=0)
+                
+                status_opcoes = ["Em análise", "Em andamento", "Concluído"]
+                status_index = status_opcoes.index(dados_edit['status']) if dados_edit and dados_edit['status'] in status_opcoes else 0
+                status = st.selectbox("Status", status_opcoes, index=status_index)
+                
                 obs = st.text_input("Observações", value=dados_edit['observacoes'] if dados_edit else "")
 
             if st.form_submit_button("💾 Salvar Plano de Ação"):
                 if st.session_state.edit_id:
-                    sql = "UPDATE Acoes SET descricao_acao=%s, porque=%s, id_responsavel=%s, prazo=%s, quanto_custa=%s, status=%s, prioridade=%s, observacoes=%s WHERE id_acao=%s"
-                    executar_db(sql, (what, why, dict_u[who], when, cost, status, prio, obs, st.session_state.edit_id), False)
+                    sql = "UPDATE Acoes SET descricao_acao=%s, porque=%s, como=%s, id_responsavel=%s, prazo=%s, quanto_custa=%s, status=%s, prioridade=%s, observacoes=%s WHERE id_acao=%s"
+                    executar_db(sql, (what, why, how, dict_u[who], when, cost, status, prio, obs, st.session_state.edit_id), False)
                     st.session_state.edit_id = None
                 else:
-                    sql = "INSERT INTO Acoes (descricao_acao, porque, id_responsavel, prazo, quanto_custa, status, prioridade, observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"
-                    executar_db(sql, (what, why, dict_u[who], when, cost, status, prio, obs), False)
+                    sql = "INSERT INTO Acoes (descricao_acao, porque, como, id_responsavel, prazo, quanto_custa, status, prioridade, observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)"
+                    executar_db(sql, (what, why, how, dict_u[who], when, cost, status, prio, obs), False)
                 st.cache_data.clear()
                 st.rerun()
         
@@ -114,20 +140,36 @@ with tab_lista:
                 st.session_state.edit_id = None
                 st.rerun()
 
-    # LISTAGEM
+    # FILTROS DE LISTAGEM ISOLADOS
     st.subheader("📋 Ações e Prazos")
+    df_filtrado = df.copy()
+    
     if not df.empty:
-        hoje = date.today()
-        for _, row in df.iterrows():
+        f1, f2 = st.columns(2)
+        with f1:
+            filtro_quem = st.multiselect("Filtrar por Responsável", options=list(df['quem'].unique()), default=[])
+        with f2:
+            filtro_status = st.multiselect("Filtrar por Status", options=list(df['status'].unique()), default=[])
+        
+        if filtro_quem:
+            df_filtrado = df_filtrado[df_filtrado['quem'].isin(filtro_quem)]
+        if filtro_status:
+            df_filtrado = df_filtrado[df_filtrado['status'].isin(filtro_status)]
+
+    # EXIBIÇÃO EM LISTA CARD POR CARD
+    if not df_filtrado.empty:
+        for _, row in df_filtrado.iterrows():
             dt_br = pd.to_datetime(row['prazo']).strftime('%d/%m/%Y')
             atraso = pd.to_datetime(row['prazo']).date() < hoje and row['status'] != 'Concluído'
             cor = "#dc3545" if atraso else "#28a745" if row['status'] == "Concluído" else "#ffc107"
             
             with st.container():
                 c1, c2, c3, c4 = st.columns([0.02, 0.78, 0.1, 0.1])
-                c1.markdown(f"<div style='background-color:{cor}; height:75px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
+                c1.markdown(f"<div style='background-color:{cor}; height:95px; width:8px; border-radius:5px'></div>", unsafe_allow_html=True)
                 with c2:
                     st.write(f"**{row['descricao_acao']}** | {row['quem']} | **{dt_br}**")
+                    if 'como' in row and row['como']:
+                        st.caption(f"🔧 **Como:** {row['como']}")
                     st.caption(f"Status: {row['status']} | Prioridade: {row['prioridade']} | R$ {float(row['quanto_custa'] or 0):,.2f}")
                     if row['observacoes']: st.info(f"💬 {row['observacoes']}")
                 
@@ -151,7 +193,7 @@ with tab_lista:
                         st.rerun()
                 st.divider()
     else:
-        st.info("Nenhuma ação registrada para a lavanderia.")
+        st.info("Nenhuma ação cadastrada ou correspondente aos filtros.")
 
 with tab_graficos:
     if not df.empty:
@@ -160,18 +202,3 @@ with tab_graficos:
         m1.metric("Ações Ativas", len(df))
         m2.metric("Concluídas", len(df[df['status'] == 'Concluído']))
         m3.metric("Inv. Total", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
-        m4.metric("🚨 Atrasos", len(df[(pd.to_datetime(df['prazo']).dt.date < hoje) & (df['status'] != 'Concluído')]))
-        
-        g1, g2 = st.columns(2)
-        with g1:
-            fig1 = px.pie(df, names='status', title="Distribuição por Status", hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig1, use_container_width=True)
-        with g2:
-            fig2 = px.bar(df, x='prioridade', y='quanto_custa', color='status', title="Investimento por Prioridade", barmode='group')
-            st.plotly_chart(fig2, use_container_width=True)
-
-# BARRA LATERAL
-st.sidebar.markdown(f"**Usuário:** {st.session_state.get('user', 'Admin')}")
-if st.sidebar.button("Sair do Sistema"):
-    st.session_state['logado'] = False
-    st.rerun()
