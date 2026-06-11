@@ -57,7 +57,8 @@ if not st.session_state['logado']:
         if st.form_submit_button("Entrar no Sistema"):
             res = executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
             if res:
-                nivel_usuario = res.get('nivel', 'Comum') if isinstance(res, list) and len(res) > 0 else 'Comum'
+                # CORREÇÃO AQUI: Acessa o primeiro elemento da lista com segurança antes de usar o .get()
+                nivel_usuario = res[0].get('nivel', 'Comum') if isinstance(res, list) and len(res) > 0 else 'Comum'
                 st.session_state['logado'], st.session_state['nivel'] = True, nivel_usuario
                 st.rerun()
             else:
@@ -96,7 +97,7 @@ with tab_lista:
     dados_edit = None
     if st.session_state.edit_id:
         res_e = executar_db("SELECT * FROM Acoes WHERE id_acao=%s", (st.session_state.edit_id,))
-        if res_e: dados_edit = res_e[0]
+        if res_e: dados_edit = res_e[0] # Correção para obter o dicionário dentro da lista retornada
 
     with st.expander("📝 Formulário 5W2H", expanded=(st.session_state.edit_id is not None)):
         res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
@@ -202,6 +203,3 @@ with tab_lista:
 
 with tab_graficos:
     if not df.empty:
-        st.subheader("📊 Indicadores da Lavo e Levo")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ações Ativas", len(df))
