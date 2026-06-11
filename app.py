@@ -36,7 +36,6 @@ def executar_db(sql, params=None, retorno=True):
         return None
 
 # --- VERIFICAÇÃO AUTOMÁTICA DA COLUNA 'COMO' ---
-# Garante que a coluna nova exista no banco sem precisar rodar comandos manuais externos
 if 'coluna_verificada' not in st.session_state:
     check_sql = "SHOW COLUMNS FROM Acoes LIKE 'como'"
     coluna_existe = executar_db(check_sql)
@@ -58,7 +57,7 @@ if not st.session_state['logado']:
         if st.form_submit_button("Entrar no Sistema"):
             res = executar_db("SELECT * FROM Credenciais WHERE usuario=%s AND senha=%s", (u, s))
             if res:
-                nivel_usuario = res[0].get('nivel', 'Comum') if isinstance(res, list) and len(res) > 0 else 'Comum'
+                nivel_usuario = res.get('nivel', 'Comum') if isinstance(res, list) and len(res) > 0 else 'Comum'
                 st.session_state['logado'], st.session_state['nivel'] = True, nivel_usuario
                 st.rerun()
             else:
@@ -87,12 +86,20 @@ st.markdown("""
 tab_lista, tab_graficos = st.tabs(["📝 Lançamentos e Controle", "📊 Análise de Performance"])
 
 with tab_lista:
+    # --- NOVO: BOTÃO DE ATALHO PARA CRIAR NOVO ITEM ---
+    # Limpa qualquer ID de edição que esteja ativo e reseta o formulário
+    c_btn, _ = st.columns([0.2, 0.8])
+    if c_btn.button("➕ Nova Ação (Limpar)", use_container_width=True):
+        st.session_state.edit_id = None
+        st.rerun()
+
     # FORMULÁRIO (CADASTRO / EDIÇÃO)
     dados_edit = None
     if st.session_state.edit_id:
         res_e = executar_db("SELECT * FROM Acoes WHERE id_acao=%s", (st.session_state.edit_id,))
-        if res_e: dados_edit = res_e[0]
+        if res_e: dados_edit = res_e
 
+    # O expander abrirá automaticamente se o usuário clicar no botão ou se estiver editando
     with st.expander("📝 Formulário 5W2H", expanded=(st.session_state.edit_id is not None)):
         res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
         dict_u = {u['nome']: u['id_usuario'] for u in res_u} if res_u else {}
@@ -197,8 +204,3 @@ with tab_lista:
 
 with tab_graficos:
     if not df.empty:
-        st.subheader("📊 Indicadores da Lavo e Levo")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ações Ativas", len(df))
-        m2.metric("Concluídas", len(df[df['status'] == 'Concluído']))
-        m3.metric("Inv. Total", f"R$ {pd.to_numeric(df['quanto_custa']).sum():,.2f}")
