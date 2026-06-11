@@ -86,8 +86,7 @@ st.markdown("""
 tab_lista, tab_graficos = st.tabs(["📝 Lançamentos e Controle", "📊 Análise de Performance"])
 
 with tab_lista:
-    # --- NOVO: BOTÃO DE ATALHO PARA CRIAR NOVO ITEM ---
-    # Limpa qualquer ID de edição que esteja ativo e reseta o formulário
+    # BOTÃO DE ATALHO PARA CRIAR NOVO ITEM
     c_btn, _ = st.columns([0.2, 0.8])
     if c_btn.button("➕ Nova Ação (Limpar)", use_container_width=True):
         st.session_state.edit_id = None
@@ -97,9 +96,8 @@ with tab_lista:
     dados_edit = None
     if st.session_state.edit_id:
         res_e = executar_db("SELECT * FROM Acoes WHERE id_acao=%s", (st.session_state.edit_id,))
-        if res_e: dados_edit = res_e
+        if res_e: dados_edit = res_e[0]
 
-    # O expander abrirá automaticamente se o usuário clicar no botão ou se estiver editando
     with st.expander("📝 Formulário 5W2H", expanded=(st.session_state.edit_id is not None)):
         res_u = executar_db("SELECT id_usuario, nome FROM Usuarios")
         dict_u = {u['nome']: u['id_usuario'] for u in res_u} if res_u else {}
@@ -204,3 +202,6 @@ with tab_lista:
 
 with tab_graficos:
     if not df.empty:
+        st.subheader("📊 Indicadores da Lavo e Levo")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ações Ativas", len(df))
